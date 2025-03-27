@@ -1,0 +1,205 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <link rel="stylesheet" href="style.css">
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dự đoán số viết tay1</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            text-align: center;
+            background-color: #f4f4f9;
+            color: #333;
+            margin: 0;
+            padding: 0;
+        }
+        h1 {
+            margin-top: 20px;
+            color: #4CAF50;
+        }
+        canvas {
+            border: 2px solid #4CAF50;
+            cursor: crosshair;
+            margin-top: 20px;
+        }
+        button {
+            margin: 10px;
+            padding: 10px 20px;
+            font-size: 16px;
+            background-color: #4CAF50;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+        }
+        button:hover {
+            background-color: #45a049;
+        }
+        #result {
+            font-size: 20px;
+            margin-top: 20px;
+            font-weight: bold;
+        }
+    </style>
+</head>
+<body onload="initializeCanvas()"> 
+    <h1>Dự đoán số viết tay</h1>
+    
+    <canvas id="canvas" width="280" height="280"></canvas><br>
+    <button onclick="clearCanvas()">Xóa</button>
+    <button onclick="predictDigit()">Dự đoán</button>
+    <br>
+    <input type="file" id="imageUpload" accept="image/*" onchange="handleImageUpload(event)">
+    <p id="result"></p>
+    <div>
+        <h3>Ảnh gốc:</h3>
+        <img id="originalImage" alt="Ảnh gốc" style="border: 1px solid #ccc; max-width: 100px;">
+    </div>
+    <div>
+        <h3>Ảnh đã đảo màu:</h3>
+        <img id="invertedImage" alt="Ảnh đã đảo màu" style="border: 1px solid #ccc; max-width: 100px;">
+    </div>
+    <div>
+        <h3>Ảnh nhị phân:</h3>
+        <img id="thresholdImage" alt="Ảnh nhị phân" style="border: 1px solid #ccc; max-width: 100px;">
+    </div>
+    <div>
+        <h3>Ảnh làm dày nét:</h3>
+        <img id="dilatedImage" alt="Ảnh làm dày nét" style="border: 1px solid #ccc; max-width: 100px;">
+    </div>
+    <div>
+        <h3>Ảnh với bounding box:</h3>
+        <img id="boundingBoxImage" alt="Ảnh với bounding box" style="border: 1px solid #ccc; max-width: 100px;">
+    </div>
+    <div>
+        <h3>Ảnh đã cắt:</h3>
+        <img id="croppedImage" alt="Ảnh đã cắt" style="border: 1px solid #ccc; max-width: 100px;">
+    </div>
+    <div>
+        <h3>Ảnh đã resize:</h3>
+        <img id="resizedImage" alt="Ảnh đã resize" style="border: 1px solid #ccc; max-width: 100px;">
+    </div>
+    <div>
+        <h3>Ảnh đã tiền xử lý:</h3>
+        <img id="finalImage" alt="Ảnh đã tiền xử lý" style="border: 1px solid #ccc; max-width: 100px;">
+    </div>
+
+    <script>
+        const canvas = document.getElementById('canvas');
+        const ctx = canvas.getContext('2d');
+        let isDrawing = false;
+
+        function initializeCanvas() {
+            ctx.fillStyle = 'black';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+        }
+
+        canvas.addEventListener('mousedown', () => {
+            isDrawing = true;
+            ctx.beginPath();
+        });
+
+        canvas.addEventListener('mouseup', () => {
+            isDrawing = false;
+            ctx.beginPath();
+        });
+
+        canvas.addEventListener('mousemove', draw);
+
+        function draw(event) {
+            if (!isDrawing) return;
+            ctx.lineWidth = 15;
+            ctx.lineCap = 'round';
+            ctx.strokeStyle = 'white';
+            ctx.lineTo(event.offsetX, event.offsetY);
+            ctx.stroke();
+            ctx.beginPath();
+            ctx.moveTo(event.offsetX, event.offsetY);
+        }
+
+        function clearCanvas() {
+            ctx.fillStyle = 'black';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            ctx.beginPath();
+            isDrawing = false;
+            document.getElementById('result').innerText = '';
+        }
+
+        function handleImageUpload(event) {
+            const file = event.target.files[0];
+            if (!file) return;
+
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                const img = new Image();
+                img.onload = function() {
+                    // Draw the uploaded image on the canvas
+                    ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+
+                    // Convert the image to grayscale
+                    const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+                    const data = imageData.data;
+                    for (let i = 0; i < data.length; i += 4) {
+                        const gray = 0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2]; // Grayscale formula
+                        data[i] = data[i + 1] = data[i + 2] = gray; // Set R, G, B to the grayscale value
+                        // Alpha (data[i + 3]) remains unchanged
+                    }
+                    ctx.putImageData(imageData, 0, 0);
+
+                    // Invert colors to match MNIST format (background black, digit white)
+                    for (let i = 0; i < data.length; i += 4) {
+                        data[i] = 255 - data[i];     // Red
+                        data[i + 1] = 255 - data[i + 1]; // Green
+                        data[i + 2] = 255 - data[i + 2]; // Blue
+                    }
+                    ctx.putImageData(imageData, 0, 0);
+                };
+                img.src = e.target.result;
+            };
+            reader.readAsDataURL(file);
+        }
+
+        async function predictDigit() {
+            if (isCanvasEmpty()) {
+                document.getElementById('result').innerText = '⚠️ Canvas trống! Vui lòng vẽ hoặc tải lên một ảnh trước khi nhấn "Dự đoán".';
+                return;
+            }
+            const imageData = canvas.toDataURL('image/png'); 
+            try {
+                const response = await fetch('http://127.0.0.1:5000/predict', {  // Use full server URL
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ image: imageData })
+                });
+
+                if (!response.ok) throw new Error('Gửi ảnh thất bại!');
+
+                const result = await response.json();
+                if (result.error) throw new Error(result.error);
+
+                document.getElementById('result').innerText = 
+                    `Số dự đoán: ${result.digit}, Độ chính xác: ${result.confidence.toFixed(2)}%`;
+
+                // Display images for each step
+                document.getElementById('originalImage').src = result.steps.original;
+                document.getElementById('invertedImage').src = result.steps.inverted;
+                document.getElementById('thresholdImage').src = result.steps.threshold;
+                document.getElementById('dilatedImage').src = result.steps.dilated;
+                document.getElementById('boundingBoxImage').src = result.steps.bounding_box;
+                document.getElementById('croppedImage').src = result.steps.cropped;
+                document.getElementById('resizedImage').src = result.steps.resized;
+                document.getElementById('finalImage').src = result.steps.final;
+            } catch (error) {
+                console.error("Lỗi:", error);
+                document.getElementById('result').innerText = `Lỗi: ${error.message}`;
+            }
+        }
+
+        function isCanvasEmpty() {
+            const pixelData = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
+            return !pixelData.some((value, index) => index % 4 !== 3 && value > 0);
+        }
+    </script>
+</body>
+</html>
