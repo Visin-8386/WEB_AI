@@ -3,14 +3,13 @@ import base64
 import numpy as np
 from PIL import Image
 from io import BytesIO
-import tempfile
+import cv2
+import tensorflow as tf
 from flask import Flask, request, jsonify, send_from_directory
 from flask_cors import CORS
-import tensorflow as tf
-import cv2
 
-# Load mô hình đã huấn luyện
-model_path = r"D:\WEB_AI\digit_recognition_optimized.h5"
+# Đường dẫn đến mô hình đã huấn luyện (đảm bảo mô hình của bạn được huấn luyện với dạng số trắng trên nền đen)
+model_path = r"D:\WEB_AI\digit_recognition_optimized_colab.h5"
 model = tf.keras.models.load_model(model_path)
 
 app = Flask(__name__)
@@ -21,165 +20,160 @@ def index():
     return send_from_directory(os.path.dirname(__file__), 'index.html')
 
 def image_to_base64(img: np.ndarray) -> str:
-    """
-    Chuyển đổi ảnh (numpy array) sang định dạng base64.
-    """
+    """Chuyển ảnh numpy array sang chuỗi base64 để hiển thị trên web."""
     ret, buffer = cv2.imencode('.png', img)
     return base64.b64encode(buffer).decode('utf-8')
 
-def preprocess_image(image_path: str):
+def resize_and_pad(roi, size=28, padding=5):
     """
-    Xử lý ảnh từ file với các bước:
-      1. Đọc ảnh dưới dạng grayscale.
-      2. Kiểm tra nền ảnh: nếu nền sáng (mean > 127) => đảo màu, còn không thì giữ nguyên.
-      3. Chuẩn hóa ảnh bằng cv2.normalize.
-      4. Áp dụng threshold (đã nâng từ 30 lên 50) tạo ảnh nhị phân.
-      5. Dilation (làm dày nét) để giữ nét chữ rõ hơn.
-      6. Tìm bounding box chứa chữ số và crop.
-      7. Padding ảnh để tạo ảnh vuông.
-      8. Resize ảnh về kích thước 28x28.
-      9. Chuẩn hóa ảnh về [0,1] và điều chỉnh shape cho model.
-      
-    Trả về:
-      - final_img: ảnh cuối cùng dạng (1,28,28,1) (dùng cho mô hình)
-      - steps: dictionary chứa các bước xử lý (dạng numpy array) để gửi về client
+    Resize ROI theo tỉ lệ ban đầu để chữ số không bị biến dạng,
+    sau đó chèn vào canvas đen kích thước size x size, căn giữa chữ số.
+    """
+    h, w = roi.shape
+    if h > w:
+        new_h = size - 2 * padding
+        new_w = int(w * (new_h / h))
+    else:
+        new_w = size - 2 * padding
+        new_h = int(h * (new_w / w))
+    resized = cv2.resize(roi, (new_w, new_h), interpolation=cv2.INTER_AREA)
+    
+    # Tạo canvas đen và chèn ảnh đã resize vào giữa
+    canvas = np.zeros((size, size), dtype=np.uint8)
+    x_offset = (size - new_w) // 2
+    y_offset = (size - new_h) // 2
+    canvas[y_offset:y_offset+new_h, x_offset:x_offset+new_w] = resized
+    return canvas
+
+def group_boxes(digit_boxes, row_threshold=20):
+    """
+    Gom các bounding box vào từng dòng dựa trên giá trị trung tâm theo chiều dọc (center y).
+    Nếu độ chênh lệch giữa center_y của các box nhỏ hơn row_threshold thì coi là cùng dòng.
+    Sau đó, sắp xếp từng dòng theo tọa độ x (trái qua phải) và ghép lại theo thứ tự dòng (trên xuống dưới).
+    """
+    # Sắp xếp sơ bộ theo y
+    digit_boxes.sort(key=lambda b: b[1])  # b[1] là y
+    rows = []  # Mỗi phần tử là list chứa các box thuộc cùng một dòng
+
+    for box in digit_boxes:
+        x, y, w, h = box
+        center_y = y + h / 2
+        if not rows:
+            rows.append([box])
+        else:
+            last_row = rows[-1]
+            avg_center_y = np.mean([r[1] + r[3] / 2 for r in last_row])
+            if abs(center_y - avg_center_y) <= row_threshold:
+                last_row.append(box)
+            else:
+                rows.append([box])
+    # Sắp xếp từng dòng theo x
+    for r in rows:
+        r.sort(key=lambda b: b[0])
+    # Ghép các dòng theo thứ tự từ trên xuống dưới
+    sorted_boxes = []
+    for r in rows:
+        sorted_boxes.extend(r)
+    return sorted_boxes
+
+def preprocess_image(image):
+    """
+    Tiền xử lý ảnh vẽ (với nền đen, số màu trắng) theo các bước:
+      1) Chuyển ảnh sang grayscale.
+      2) Áp dụng Otsu threshold.
+      3) Tìm contours ngoài để lấy vùng chứa số.
+      4) Với mỗi contour đủ lớn, mở rộng bounding box (padding) để không cắt sát mép.
+      5) Sử dụng hàm group_boxes để gom các bounding box thành từng dòng:
+         - Nếu tọa độ y không chênh lệch quá nhiều, sắp xếp theo thứ tự trái qua phải.
+      6) Resize mỗi ROI về 28x28 (không bóp méo) và chuẩn hóa [0,1].
+      7) Trả về danh sách ảnh đã xử lý và dictionary steps chứa các bước xử lý (base64).
     """
     steps = {}
 
-    # Bước 1: Đọc ảnh grayscale và lưu ảnh gốc
-    img = cv2.imread(image_path, cv2.IMREAD_GRAYSCALE)
-    steps["original"] = img.copy()
+    # 1. Chuyển ảnh sang grayscale
+    img_gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    steps["gray"] = image_to_base64(img_gray)
 
-    # Bước 2: Kiểm tra nền ảnh và đảo màu nếu cần
-    if np.mean(img) > 127:
-        img_inverted = cv2.bitwise_not(img)
-        steps["inversion"] = img_inverted.copy()
-    else:
-        img_inverted = img.copy()
-        steps["inversion"] = img_inverted.copy()
+    # 2. Otsu threshold
+    _, img_thresh = cv2.threshold(img_gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+    steps["threshold"] = image_to_base64(img_thresh)
 
-    # Bước 3: Chuẩn hóa ảnh
-    img_normalized = cv2.normalize(img_inverted, None, 0, 255, cv2.NORM_MINMAX)
-    steps["normalized"] = img_normalized.copy()
+    # 3. Tìm contours ngoài
+    contours, _ = cv2.findContours(img_thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
-    # Bước 4: Áp dụng threshold => chữ trắng nổi bật hơn
-    # (tăng từ 30 lên 50)
-    _, thresh = cv2.threshold(img_normalized, 50, 255, cv2.THRESH_BINARY)
-    steps["threshold"] = thresh.copy()
+    digit_boxes = []
+    for cnt in contours:
+        x, y, w, h = cv2.boundingRect(cnt)
+        # Lọc bỏ nhiễu: chỉ giữ contour có kích thước đủ lớn
+        if w > 5 and h > 5:
+            pad = 5
+            x_pad = max(0, x - pad)
+            y_pad = max(0, y - pad)
+            w_pad = w + 2 * pad
+            h_pad = h + 2 * pad
+            # Đảm bảo không vượt quá biên ảnh
+            if x_pad + w_pad > img_thresh.shape[1]:
+                w_pad = img_thresh.shape[1] - x_pad
+            if y_pad + h_pad > img_thresh.shape[0]:
+                h_pad = img_thresh.shape[0] - y_pad
+            digit_boxes.append((x_pad, y_pad, w_pad, h_pad))
 
-    # Bước 5: Dilation - làm dày nét chữ
-    kernel = np.ones((2, 2), np.uint8)
-    dilated = cv2.dilate(thresh, kernel, iterations=1)
-    steps["dilated"] = dilated.copy()
+    # 5. Gom và sắp xếp bounding box theo từng dòng
+    digit_boxes = group_boxes(digit_boxes, row_threshold=20)
 
-    # Bước 6: Tìm bounding box và crop chữ số (trên ảnh dilated)
-    x, y, w, h = cv2.boundingRect(dilated)
-    cropped = img_normalized[y:y+h, x:x+w]  # vẫn cắt trên img_normalized để giữ cường độ
-    steps["cropped"] = cropped.copy()
+    raw_digits = []
+    processed_digits = []
+    steps["digits_raw"] = []
+    steps["digits_resized"] = []
 
-    # Bước 7: Padding để tạo ảnh vuông
-    size = max(w, h)
-    padded = np.ones((size, size), dtype=np.uint8) * 0
-    dx, dy = (size - w) // 2, (size - h) // 2
-    padded[dy:dy+h, dx:dx+w] = cropped
-    steps["padded"] = padded.copy()
+    for (x, y, w, h) in digit_boxes:
+        # Cắt ROI
+        roi = img_thresh[y:y+h, x:x+w]
+        steps["digits_raw"].append(image_to_base64(roi))
+        # 6. Resize ROI về 28x28 mà không bóp méo
+        roi_resized = resize_and_pad(roi, size=28, padding=5)
+        steps["digits_resized"].append(image_to_base64(roi_resized))
+        # Chuẩn hóa về [0,1] và định dạng lại cho mô hình
+        roi_norm = roi_resized.astype("float32") / 255.0
+        roi_norm = np.expand_dims(roi_norm, axis=-1)  # (28,28,1)
+        roi_norm = np.expand_dims(roi_norm, axis=0)    # (1,28,28,1)
+        processed_digits.append(roi_norm)
 
-    # Bước 8: Resize ảnh về 28x28
-    resized = cv2.resize(padded, (28, 28), interpolation=cv2.INTER_AREA)
-    steps["resized"] = resized.copy()
+    return processed_digits, steps
 
-    # Bước 9: Chuẩn hóa ảnh về [0,1] và điều chỉnh shape cho model
-    final_img = resized.astype("float32") / 255.0
-    final_img = np.expand_dims(final_img, axis=-1)  # (28,28,1)
-    final_img = np.expand_dims(final_img, axis=0)   # (1,28,28,1)
-
-    # Lưu ảnh 28x28 cuối trước khi chuẩn hóa (dùng để tạo ảnh phóng to)
-    steps["final"] = resized.copy()
-
-    return final_img, steps
-
-@app.route('/predict', methods=['POST'])
-def predict():
+@app.route('/predict_multiple', methods=['POST'])
+def predict_multiple():
     try:
         data = request.get_json()
         if 'image' not in data:
-            return jsonify({'error': 'No image data provided'}), 400
+            return jsonify({'error': 'Không có ảnh được gửi!'}), 400
 
-        # Lấy dữ liệu ảnh từ base64 (loại bỏ header)
+        # Lấy chuỗi base64 từ dataURL (loại bỏ phần "data:image/png;base64,")
         image_data = data['image'].split(",")[1]
         image_bytes = base64.b64decode(image_data)
-        image = Image.open(BytesIO(image_bytes)).convert('L')
+        image = Image.open(BytesIO(image_bytes)).convert('RGB')
+        image_np = np.array(image)
 
-        # Lưu ảnh gốc vào file tạm thời để sử dụng preprocess_image
-        with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
-            temp_filename = tmp.name
-            image.save(temp_filename, format="PNG")
+        # Tiền xử lý ảnh
+        digit_images, steps = preprocess_image(image_np)
+        if not digit_images:
+            return jsonify({'error': 'Không tìm thấy số nào trong ảnh!'}), 400
 
-        # Gọi hàm xử lý ảnh và lấy các bước xử lý
-        img_array, steps = preprocess_image(temp_filename)
+        # Dự đoán từng chữ số
+        predicted_digits = []
+        for digit_img in digit_images:
+            preds = model.predict(digit_img)[0]
+            predicted_digit = int(np.argmax(preds))
+            predicted_digits.append(predicted_digit)
 
-        # Xóa file tạm sau khi xử lý
-        os.remove(temp_filename)
-
-        # Dự đoán với mô hình
-        preds = model.predict(img_array)[0]  # shape (10,)
-        predicted_label = int(np.argmax(preds))
-        confidence = float(np.max(preds) * 100)
-
-        # ----- Lấy top-3 dự đoán để xem mô hình "phân vân" ra sao -----
-        sorted_indices = np.argsort(preds)[::-1]  # sắp xếp giảm dần
-        top3_indices = sorted_indices[:3]
-        top3_values = preds[top3_indices]  # Xác suất (0..1)
-        top3_info = [
-            {
-                "digit": int(d),
-                "confidence": float(c * 100)
-            }
-            for d, c in zip(top3_indices, top3_values)
-        ]
-
-        # ----- Tạo ảnh phóng to để vẽ kết quả -----
-        # Ảnh "final" là ảnh 28x28 gốc (uint8), ta phóng to lên để vẽ text
-        display_size = 112  # phóng to gấp 4 lần (28 * 4)
-        result_img_big = cv2.resize(
-            steps["final"], (display_size, display_size),
-            interpolation=cv2.INTER_NEAREST
-        )
-        text = f"{predicted_label} ({confidence:.2f}%)"
-        cv2.putText(
-            result_img_big,
-            text,
-            (5, display_size - 10),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.6,
-            (255, 255, 255),
-            2
-        )
-
-        # Chuyển đổi các bước xử lý sang định dạng base64 để gửi về
-        steps_base64 = {}
-        for key, step_img in steps.items():
-            steps_base64[key] = "data:image/png;base64," + image_to_base64(step_img)
-
-        # Ảnh "predicted" là ảnh phóng to có vẽ nhãn
-        steps_base64["predicted"] = "data:image/png;base64," + image_to_base64(result_img_big)
-
-        # Chuyển ảnh gốc sang base64 để trả về
-        buffered_original = BytesIO()
-        image.save(buffered_original, format="PNG")
-        img_original_base64 = base64.b64encode(buffered_original.getvalue()).decode('utf-8')
-
-        app.logger.info(f"Predicted: {predicted_label}, Confidence: {confidence:.2f}%")
-
+        number_string = "".join(map(str, predicted_digits))
         return jsonify({
-            'digit': predicted_label,
-            'confidence': confidence,
-            'top3': top3_info,  # Gửi luôn top-3 để client xem
-            'original_image': "data:image/png;base64," + img_original_base64,
-            'steps': steps_base64
+            'digits': predicted_digits,
+            'number_string': number_string,
+            'steps': steps
         })
+
     except Exception as e:
-        app.logger.error(f"Error during prediction: {e}")
         return jsonify({'error': str(e)}), 500
 
 if __name__ == '__main__':
