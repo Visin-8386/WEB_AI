@@ -14,7 +14,7 @@
       padding: 0;
     }
     .container {
-      max-width: 500px;
+      max-width: 600px;
       margin: auto;
       padding: 20px;
       background: rgba(255, 255, 255, 0.1);
@@ -27,6 +27,8 @@
       background-color: black;
       cursor: crosshair;
       border-radius: 5px;
+      display: block;
+      margin: auto;
     }
     button {
       margin: 10px;
@@ -52,12 +54,26 @@
       border: 1px solid #ccc;
       border-radius: 5px;
     }
+    .controls {
+      margin-top: 20px;
+    }
+    .controls label {
+      margin: 0 10px;
+    }
   </style>
 </head>
 <body>
   <div class="container">
     <h1>Nhận diện chữ số AI</h1>
-    <canvas id="canvas" width="280" height="280"></canvas>
+    <canvas id="canvas" width="400" height="400"></canvas>
+    <div class="controls">
+      <label for="thickness">Độ dày nét bút:</label>
+      <input type="range" id="thickness" min="5" max="50" value="15">
+      <span id="thicknessValue">15</span>
+      <br><br>
+      <label for="colorPicker">Màu nét bút:</label>
+      <input type="color" id="colorPicker" value="#ffffff">
+    </div>
     <div>
       <button class="clear-btn" onclick="clearCanvas()">Xóa</button>
       <button class="predict-btn" onclick="predict()">Dự đoán</button>
@@ -70,11 +86,33 @@
   <script>
     let canvas = document.getElementById("canvas");
     let ctx = canvas.getContext("2d");
-    ctx.fillStyle = "black";
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
-    ctx.lineWidth = 15;
+
+    // Hàm khởi tạo canvas với nền đen
+    function initCanvas() {
+      ctx.fillStyle = "black";
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+    }
+    initCanvas();
+
+    // Các cài đặt ban đầu cho nét vẽ
+    let brushColor = document.getElementById("colorPicker").value;
+    let brushThickness = document.getElementById("thickness").value;
+    ctx.lineWidth = brushThickness;
     ctx.lineCap = "round";
-    ctx.strokeStyle = "white";
+    ctx.strokeStyle = brushColor;
+
+    // Cập nhật độ dày nét bút theo thanh trượt
+    document.getElementById("thickness").addEventListener("input", function() {
+      brushThickness = this.value;
+      ctx.lineWidth = brushThickness;
+      document.getElementById("thicknessValue").innerText = brushThickness;
+    });
+
+    // Cập nhật màu nét bút theo lựa chọn của người dùng
+    document.getElementById("colorPicker").addEventListener("input", function() {
+      brushColor = this.value;
+      ctx.strokeStyle = brushColor;
+    });
 
     let isDrawing = false;
     canvas.addEventListener("mousedown", (e) => {
@@ -89,17 +127,17 @@
       }
     });
     canvas.addEventListener("mouseup", () => { isDrawing = false; });
+    canvas.addEventListener("mouseout", () => { isDrawing = false; });
 
     function clearCanvas() {
-      ctx.fillStyle = "black";
-      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      initCanvas();
       document.getElementById("result").innerText = "Vẽ số và nhấn 'Dự đoán'";
       document.getElementById("steps").innerHTML = "";
     }
 
     async function predict() {
       let dataURL = canvas.toDataURL("image/png");
-      let response = await fetch("https://web-ai.onrender.com/predict_multiple", {
+      let response = await fetch("/predict_multiple", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ image: dataURL })

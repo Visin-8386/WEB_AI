@@ -9,7 +9,7 @@ from flask import Flask, request, jsonify, send_from_directory
 from flask_cors import CORS
 
 # Đường dẫn đến mô hình đã huấn luyện (đảm bảo mô hình của bạn được huấn luyện với dạng số trắng trên nền đen)
-model_path = r"D:\WEB_AI\digit_recognition_optimized_colab.h5"
+model_path = "digit_recognition_optimized_colab.h5"
 model = tf.keras.models.load_model(model_path)
 
 app = Flask(__name__)
