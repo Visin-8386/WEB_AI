@@ -14,13 +14,14 @@
       padding: 0;
     }
     .container {
-      max-width: 600px;
+      max-width: 800px;
       margin: auto;
       padding: 20px;
       background: rgba(255, 255, 255, 0.1);
       border-radius: 10px;
       box-shadow: 0 0 15px rgba(0, 0, 0, 0.2);
       margin-top: 50px;
+      margin-bottom: 50px;
     }
     canvas {
       border: 2px solid #fff;
@@ -41,6 +42,7 @@
     }
     .clear-btn { background: #ff4b5c; color: white; }
     .predict-btn { background: #26a69a; color: white; }
+    .dialog-btn { background: #fbbc05; color: #000; }
     button:hover { opacity: 0.8; }
     .result {
       font-size: 24px;
@@ -48,9 +50,43 @@
       margin-top: 15px;
       color: #ffeb3b;
     }
-    .steps img {
+    .steps {
+      margin-top: 20px;
+      text-align: left;
+    }
+    .step-container {
+      margin-bottom: 30px;
+      background: rgba(255, 255, 255, 0.05);
+      padding: 15px;
+      border-radius: 8px;
+    }
+    .step-title {
+      font-size: 18px;
+      font-weight: bold;
+      margin-bottom: 10px;
+      color: #4fc3f7;
+    }
+    .step-description {
+      margin-bottom: 10px;
+      font-size: 14px;
+    }
+    .step-image {
+      max-width: 100%;
+      border: 1px solid #ccc;
+      border-radius: 5px;
+      margin: 10px 0;
+    }
+    .digit-container {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-top: 10px;
+    }
+    .digit-item {
+      text-align: center;
+    }
+    .digit-image {
       width: 80px;
-      margin: 5px;
       border: 1px solid #ccc;
       border-radius: 5px;
     }
@@ -59,6 +95,38 @@
     }
     .controls label {
       margin: 0 10px;
+    }
+    /* Kiểu cho hộp thoại */
+    dialog {
+      border: none;
+      border-radius: 10px;
+      padding: 20px;
+      max-width: 400px;
+      width: 80%;
+      color: #333;
+      background: #fff;
+    }
+    dialog::backdrop {
+      background: rgba(0, 0, 0, 0.7);
+    }
+    /* Nút chuyển tab */
+    .tab-buttons {
+      display: flex;
+      justify-content: center;
+      margin-bottom: 20px;
+    }
+    .tab-button {
+      background: rgba(255, 255, 255, 0.2);
+      color: #fff;
+      border: none;
+      padding: 10px 20px;
+      margin: 0 5px;
+      border-radius: 5px 5px 0 0;
+      cursor: pointer;
+    }
+    .tab-button.active {
+      background: rgba(255, 255, 255, 0.3);
+      font-weight: bold;
     }
   </style>
 </head>
@@ -77,11 +145,41 @@
     <div>
       <button class="clear-btn" onclick="clearCanvas()">Xóa</button>
       <button class="predict-btn" onclick="predict()">Dự đoán</button>
+      <button class="dialog-btn" onclick="openDialog()">Hướng dẫn</button>
+      <button class="dialog-btn" onclick="openImageDialog()">Chọn ảnh</button>
+      <!-- Input ẩn để chọn ảnh từ máy -->
+      <input type="file" id="imageInput" accept="image/*" style="display:none;">
     </div>
     <div id="result" class="result">Vẽ số và nhấn "Dự đoán"</div>
+    
     <h2>Các bước xử lý ảnh</h2>
-    <div class="steps" id="steps"></div>
+    <div class="tab-buttons">
+      <button class="tab-button active" onclick="showTab('overview')">Tổng quan</button>
+      <button class="tab-button" onclick="showTab('details')">Chi tiết</button>
+    </div>
+    
+    <div id="overview-tab" class="tab-content">
+      <div class="step-container">
+        <div class="step-title">Kết quả nhận diện</div>
+        <div class="digit-container" id="digits-overview"></div>
+      </div>
+    </div>
+    
+    <div id="details-tab" class="tab-content" style="display:none;">
+      <div class="steps" id="steps-details"></div>
+    </div>
   </div>
+
+  <!-- Hộp thoại hướng dẫn -->
+  <dialog id="guideDialog">
+    <h2>Hướng dẫn sử dụng</h2>
+    <p>1. Dùng chuột vẽ số trên canvas hoặc chọn ảnh từ máy tính.</p>
+    <p>2. Chỉnh độ dày và màu nét bút theo ý muốn.</p>
+    <p>3. Nhấn "Dự đoán" để hệ thống nhận diện số.</p>
+    <p>4. Nhấn "Xóa" để làm mới canvas.</p>
+    <p>5. Xem các bước xử lý ảnh ở phần "Tổng quan" hoặc "Chi tiết".</p>
+    <button onclick="closeDialog()">Đóng</button>
+  </dialog>
 
   <script>
     let canvas = document.getElementById("canvas");
@@ -132,11 +230,28 @@
     function clearCanvas() {
       initCanvas();
       document.getElementById("result").innerText = "Vẽ số và nhấn 'Dự đoán'";
-      document.getElementById("steps").innerHTML = "";
+      document.getElementById("digits-overview").innerHTML = "";
+      document.getElementById("steps-details").innerHTML = "";
+    }
+
+    // Hàm chuyển tab
+    function showTab(tabName) {
+      const tabs = document.querySelectorAll('.tab-content');
+      const buttons = document.querySelectorAll('.tab-button');
+      
+      tabs.forEach(tab => tab.style.display = 'none');
+      buttons.forEach(btn => btn.classList.remove('active'));
+      
+      document.getElementById(`${tabName}-tab`).style.display = 'block';
+      document.querySelector(`.tab-button[onclick="showTab('${tabName}')"]`).classList.add('active');
     }
 
     async function predict() {
       let dataURL = canvas.toDataURL("image/png");
+      
+      // Hiển thị thông báo đang xử lý
+      document.getElementById("result").innerHTML = `<span style="color:#4fc3f7;">Đang xử lý...</span>`;
+      
       let response = await fetch("/predict_multiple", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -148,15 +263,172 @@
         document.getElementById("result").innerHTML = `<span style="color:red;">Lỗi: ${result.error}</span>`;
       } else {
         document.getElementById("result").innerText = `Dự đoán: ${result.number_string}`;
-        let stepsDiv = document.getElementById("steps");
-        stepsDiv.innerHTML = "";
-        result.steps?.digits_resized?.forEach(base64Str => {
-          let img = document.createElement("img");
+        
+        // Hiển thị tổng quan (các chữ số đã nhận diện)
+        const digitsOverview = document.getElementById("digits-overview");
+        digitsOverview.innerHTML = "";
+        
+        result.steps?.digits_resized?.forEach((base64Str, index) => {
+          const digitContainer = document.createElement("div");
+          digitContainer.className = "digit-item";
+          
+          const img = document.createElement("img");
           img.src = "data:image/png;base64," + base64Str;
-          stepsDiv.appendChild(img);
+          img.className = "digit-image";
+          
+          const label = document.createElement("div");
+          label.innerText = `Số ${result.digits[index]}`;
+          
+          digitContainer.appendChild(img);
+          digitContainer.appendChild(label);
+          digitsOverview.appendChild(digitContainer);
         });
+        
+        // Hiển thị chi tiết các bước xử lý
+        const stepsDetails = document.getElementById("steps-details");
+        stepsDetails.innerHTML = "";
+        
+        // Bước 1: Ảnh gốc
+        addStepSection(stepsDetails, "Bước 1: Ảnh gốc", 
+          "Ảnh đầu vào được chuyển sang định dạng grayscale (thang độ xám) để đơn giản hóa quá trình xử lý.",
+          "data:image/png;base64," + result.steps.gray);
+        
+        // Bước 2: Ngưỡng hóa
+        addStepSection(stepsDetails, "Bước 2: Ngưỡng hóa Otsu", 
+          "Áp dụng thuật toán Otsu để tự động tìm ngưỡng tối ưu, chuyển ảnh sang dạng nhị phân (trắng-đen).",
+          "data:image/png;base64," + result.steps.threshold);
+        
+        // Bước 3: Tìm contours
+        if (result.steps.contours) {
+          addStepSection(stepsDetails, "Bước 3: Tìm contours", 
+            "Tìm các đường viền (contours) của các đối tượng trong ảnh để xác định vị trí các chữ số.",
+            "data:image/png;base64," + result.steps.contours);
+        }
+        
+        // Bước 4: Bounding boxes
+        if (result.steps.boxes) {
+          addStepSection(stepsDetails, "Bước 4: Xác định bounding boxes", 
+            "Tạo các hộp bao quanh (bounding boxes) cho mỗi contour đủ lớn để xác định vùng chứa chữ số.",
+            "data:image/png;base64," + result.steps.boxes);
+        }
+        
+        // Bước 5: Sắp xếp boxes
+        if (result.steps.sorted_boxes) {
+          addStepSection(stepsDetails, "Bước 5: Sắp xếp bounding boxes", 
+            "Sắp xếp các bounding boxes theo thứ tự từ trái qua phải, từ trên xuống dưới để đảm bảo thứ tự đọc chính xác.",
+            "data:image/png;base64," + result.steps.sorted_boxes);
+        }
+        
+        // Bước 6: Cắt và resize các chữ số
+        const digitStepContainer = document.createElement("div");
+        digitStepContainer.className = "step-container";
+        
+        const digitStepTitle = document.createElement("div");
+        digitStepTitle.className = "step-title";
+        digitStepTitle.innerText = "Bước 6: Cắt và resize các chữ số";
+        
+        const digitStepDesc = document.createElement("div");
+        digitStepDesc.className = "step-description";
+        digitStepDesc.innerText = "Mỗi chữ số được cắt từ ảnh gốc và resize về kích thước 28x28 pixel để phù hợp với đầu vào của mô hình.";
+        
+        const digitGrid = document.createElement("div");
+        digitGrid.className = "digit-container";
+        
+        // Hiển thị từng cặp ảnh gốc và ảnh đã resize
+        result.steps.digits_raw.forEach((rawDigit, index) => {
+          const digitPair = document.createElement("div");
+          digitPair.className = "digit-item";
+          digitPair.style.marginRight = "20px";
+          
+          const rawImg = document.createElement("img");
+          rawImg.src = "data:image/png;base64," + rawDigit;
+          rawImg.className = "digit-image";
+          rawImg.style.marginBottom = "5px";
+          
+          const resizedImg = document.createElement("img");
+          resizedImg.src = "data:image/png;base64," + result.steps.digits_resized[index];
+          resizedImg.className = "digit-image";
+          
+          const label = document.createElement("div");
+          label.innerText = `Dự đoán: ${result.digits[index]}`;
+          
+          digitPair.appendChild(document.createTextNode("Gốc:"));
+          digitPair.appendChild(rawImg);
+          digitPair.appendChild(document.createTextNode("Resize:"));
+          digitPair.appendChild(resizedImg);
+          digitPair.appendChild(label);
+          
+          digitGrid.appendChild(digitPair);
+        });
+        
+        digitStepContainer.appendChild(digitStepTitle);
+        digitStepContainer.appendChild(digitStepDesc);
+        digitStepContainer.appendChild(digitGrid);
+        stepsDetails.appendChild(digitStepContainer);
+        
+        // Hiển thị tab tổng quan mặc định
+        showTab('overview');
       }
     }
+    
+    // Hàm tạo section cho từng bước xử lý
+    function addStepSection(container, title, description, imageUrl) {
+      const stepContainer = document.createElement("div");
+      stepContainer.className = "step-container";
+      
+      const stepTitle = document.createElement("div");
+      stepTitle.className = "step-title";
+      stepTitle.innerText = title;
+      
+      const stepDesc = document.createElement("div");
+      stepDesc.className = "step-description";
+      stepDesc.innerText = description;
+      
+      const stepImage = document.createElement("img");
+      stepImage.src = imageUrl;
+      stepImage.className = "step-image";
+      
+      stepContainer.appendChild(stepTitle);
+      stepContainer.appendChild(stepDesc);
+      stepContainer.appendChild(stepImage);
+      container.appendChild(stepContainer);
+    }
+
+    // Hàm mở hộp thoại hướng dẫn
+    function openDialog() {
+      document.getElementById("guideDialog").showModal();
+    }
+
+    // Hàm đóng hộp thoại hướng dẫn
+    function closeDialog() {
+      document.getElementById("guideDialog").close();
+    }
+
+    // Hàm mở hộp thoại chọn ảnh từ máy tính
+    function openImageDialog() {
+      document.getElementById("imageInput").click();
+    }
+
+    // Xử lý khi người dùng chọn ảnh từ máy tính
+    document.getElementById("imageInput").addEventListener("change", function(event) {
+      const file = event.target.files[0];
+      if (file) {
+        const reader = new FileReader();
+        reader.onload = function(e) {
+          const img = new Image();
+          img.onload = function() {
+            // Tính toán tỷ lệ để vẽ ảnh vừa khít canvas
+            const scale = Math.min(canvas.width / img.width, canvas.height / img.height);
+            const x = (canvas.width / 2) - (img.width / 2) * scale;
+            const y = (canvas.height / 2) - (img.height / 2) * scale;
+            clearCanvas();
+            ctx.drawImage(img, x, y, img.width * scale, img.height * scale);
+          }
+          img.src = e.target.result;
+        }
+        reader.readAsDataURL(file);
+      }
+    });
   </script>
 </body>
 </html>

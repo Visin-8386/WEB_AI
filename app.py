@@ -100,6 +100,11 @@ def preprocess_image(image):
 
     # 3. Tìm contours ngoài
     contours, _ = cv2.findContours(img_thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    
+    # Tạo bản sao của ảnh để vẽ contours lên
+    img_with_contours = cv2.cvtColor(img_thresh.copy(), cv2.COLOR_GRAY2BGR)
+    cv2.drawContours(img_with_contours, contours, -1, (0, 255, 0), 2)
+    steps["contours"] = image_to_base64(img_with_contours)
 
     digit_boxes = []
     for cnt in contours:
@@ -118,8 +123,22 @@ def preprocess_image(image):
                 h_pad = img_thresh.shape[0] - y_pad
             digit_boxes.append((x_pad, y_pad, w_pad, h_pad))
 
+    # Tạo ảnh với bounding boxes
+    img_with_boxes = cv2.cvtColor(img_thresh.copy(), cv2.COLOR_GRAY2BGR)
+    for (x, y, w, h) in digit_boxes:
+        cv2.rectangle(img_with_boxes, (x, y), (x + w, y + h), (0, 0, 255), 2)
+    steps["boxes"] = image_to_base64(img_with_boxes)
+
     # 5. Gom và sắp xếp bounding box theo từng dòng
     digit_boxes = group_boxes(digit_boxes, row_threshold=20)
+
+    # Tạo ảnh với bounding boxes đã sắp xếp
+    img_with_sorted_boxes = cv2.cvtColor(img_thresh.copy(), cv2.COLOR_GRAY2BGR)
+    for i, (x, y, w, h) in enumerate(digit_boxes):
+        cv2.rectangle(img_with_sorted_boxes, (x, y), (x + w, y + h), (0, 0, 255), 2)
+        # Thêm số thứ tự để thấy rõ thứ tự sắp xếp
+        cv2.putText(img_with_sorted_boxes, str(i), (x, y-5), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 0, 0), 2)
+    steps["sorted_boxes"] = image_to_base64(img_with_sorted_boxes)
 
     raw_digits = []
     processed_digits = []
