@@ -25,7 +25,7 @@
     }
     canvas {
       border: 2px solid #fff;
-      background-color: black;
+      background-color: rgb(81, 50, 239);
       cursor: crosshair;
       border-radius: 5px;
       display: block;
@@ -133,6 +133,9 @@
 <body>
   <div class="container">
     <h1>Nhận diện chữ số AI</h1>
+    <p style="color: #ffeb3b; font-size: 16px; margin-bottom: 20px;">
+      Lưu ý: Đảm bảo nền đen và chữ số màu trắng để hệ thống nhận diện chính xác.
+    </p>
     <canvas id="canvas" width="400" height="400"></canvas>
     <div class="controls">
       <label for="thickness">Độ dày nét bút:</label>
@@ -141,6 +144,9 @@
       <br><br>
       <label for="colorPicker">Màu nét bút:</label>
       <input type="color" id="colorPicker" value="#ffffff">
+      <br><br>
+      <label for="bgColorPicker">Màu nền:</label>
+      <input type="color" id="bgColorPicker" value="#000000">
     </div>
     <div>
       <button class="clear-btn" onclick="clearCanvas()">Xóa</button>
@@ -151,6 +157,7 @@
       <input type="file" id="imageInput" accept="image/*" style="display:none;">
     </div>
     <div id="result" class="result">Vẽ số và nhấn "Dự đoán"</div>
+    <div id="background-results" style="margin-top: 20px;"></div>
     
     <h2>Các bước xử lý ảnh</h2>
     <div class="tab-buttons">
@@ -185,7 +192,7 @@
     let canvas = document.getElementById("canvas");
     let ctx = canvas.getContext("2d");
 
-    // Hàm khởi tạo canvas với nền đen
+    // Hàm khởi tạo canvas với nền mặc định (mặc định là nền đen)
     function initCanvas() {
       ctx.fillStyle = "black";
       ctx.fillRect(0, 0, canvas.width, canvas.height);
@@ -210,6 +217,13 @@
     document.getElementById("colorPicker").addEventListener("input", function() {
       brushColor = this.value;
       ctx.strokeStyle = brushColor;
+    });
+
+    // Cập nhật màu nền khung vẽ theo lựa chọn của người dùng
+    document.getElementById("bgColorPicker").addEventListener("input", function() {
+      const bgColor = this.value;
+      ctx.fillStyle = bgColor;
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
     });
 
     let isDrawing = false;
@@ -277,7 +291,7 @@
           img.className = "digit-image";
           
           const label = document.createElement("div");
-          label.innerText = `Số ${result.digits[index]}`;
+          label.innerText = `Số ${result.digits[index]} (Độ tin cậy: ${(result.confidence[index] * 100).toFixed(2)}%)`;
           
           digitContainer.appendChild(img);
           digitContainer.appendChild(label);
@@ -290,51 +304,62 @@
         
         // Bước 1: Ảnh gốc
         addStepSection(stepsDetails, "Bước 1: Ảnh gốc", 
-          "Ảnh đầu vào được chuyển sang định dạng grayscale (thang độ xám) để đơn giản hóa quá trình xử lý.",
+          "Ảnh đầu vào được chuyển sang grayscale (thang độ xám).",
           "data:image/png;base64," + result.steps.gray);
         
-        // Bước 2: Ngưỡng hóa
-        addStepSection(stepsDetails, "Bước 2: Ngưỡng hóa Otsu", 
-          "Áp dụng thuật toán Otsu để tự động tìm ngưỡng tối ưu, chuyển ảnh sang dạng nhị phân (trắng-đen).",
-          "data:image/png;base64," + result.steps.threshold);
+        // Bước 2: Ảnh làm mờ
+        addStepSection(stepsDetails, "Bước 2: Ảnh làm mờ", 
+          "Áp dụng Gaussian blur để giảm nhiễu.",
+          "data:image/png;base64," + result.steps.blurred);
         
-        // Bước 3: Tìm contours
+        // Bước 3: Nền được xử lý
+        addStepSection(stepsDetails, "Bước 3: Nền được xử lý", 
+          "Nền được xử lý để đảm bảo nền đen và chữ trắng.",
+          "data:image/png;base64," + result.steps.optimized_background);
+        
+        // Bước 4: Tìm contours
         if (result.steps.contours) {
-          addStepSection(stepsDetails, "Bước 3: Tìm contours", 
-            "Tìm các đường viền (contours) của các đối tượng trong ảnh để xác định vị trí các chữ số.",
+          addStepSection(stepsDetails, "Bước 4: Tìm contours", 
+            "Tìm các đường viền (contours) của các đối tượng trong ảnh.",
             "data:image/png;base64," + result.steps.contours);
         }
         
-        // Bước 4: Bounding boxes
+        // Bước 5: Xác định bounding boxes
         if (result.steps.boxes) {
-          addStepSection(stepsDetails, "Bước 4: Xác định bounding boxes", 
-            "Tạo các hộp bao quanh (bounding boxes) cho mỗi contour đủ lớn để xác định vùng chứa chữ số.",
+          addStepSection(stepsDetails, "Bước 5: Xác định bounding boxes", 
+            "Tạo các hộp bao quanh cho mỗi contour đủ lớn.",
             "data:image/png;base64," + result.steps.boxes);
         }
         
-        // Bước 5: Sắp xếp boxes
+        // Bước 6: Sắp xếp bounding boxes
         if (result.steps.sorted_boxes) {
-          addStepSection(stepsDetails, "Bước 5: Sắp xếp bounding boxes", 
-            "Sắp xếp các bounding boxes theo thứ tự từ trái qua phải, từ trên xuống dưới để đảm bảo thứ tự đọc chính xác.",
+          addStepSection(stepsDetails, "Bước 6: Sắp xếp bounding boxes", 
+            "Sắp xếp các bounding boxes theo thứ tự từ trái sang phải và từ trên xuống dưới.",
             "data:image/png;base64," + result.steps.sorted_boxes);
         }
         
-        // Bước 6: Cắt và resize các chữ số
+        // Bước 7: Tăng độ dày nét vẽ và làm bự chữ số
+        result.steps.thickened_digits.forEach((base64Str, index) => {
+          addStepSection(stepsDetails, `Bước 7.${index + 1}: Tăng độ dày nét vẽ`, 
+            "Tăng độ dày nét vẽ và làm bự chữ số nếu kích thước quá nhỏ.",
+            "data:image/png;base64," + base64Str);
+        });
+        
+        // Bước 8: Cắt và resize các chữ số
         const digitStepContainer = document.createElement("div");
         digitStepContainer.className = "step-container";
         
         const digitStepTitle = document.createElement("div");
         digitStepTitle.className = "step-title";
-        digitStepTitle.innerText = "Bước 6: Cắt và resize các chữ số";
+        digitStepTitle.innerText = "Bước 8: Cắt và resize các chữ số";
         
         const digitStepDesc = document.createElement("div");
         digitStepDesc.className = "step-description";
-        digitStepDesc.innerText = "Mỗi chữ số được cắt từ ảnh gốc và resize về kích thước 28x28 pixel để phù hợp với đầu vào của mô hình.";
+        digitStepDesc.innerText = "Mỗi chữ số được cắt từ ảnh gốc và resize về kích thước 28x28 pixel.";
         
         const digitGrid = document.createElement("div");
         digitGrid.className = "digit-container";
         
-        // Hiển thị từng cặp ảnh gốc và ảnh đã resize
         result.steps.digits_raw.forEach((rawDigit, index) => {
           const digitPair = document.createElement("div");
           digitPair.className = "digit-item";
@@ -350,7 +375,7 @@
           resizedImg.className = "digit-image";
           
           const label = document.createElement("div");
-          label.innerText = `Dự đoán: ${result.digits[index]}`;
+          label.innerText = `Dự đoán: ${result.digits[index]} (Độ tin cậy: ${(result.confidence[index] * 100).toFixed(2)}%)`;
           
           digitPair.appendChild(document.createTextNode("Gốc:"));
           digitPair.appendChild(rawImg);
@@ -371,7 +396,6 @@
       }
     }
     
-    // Hàm tạo section cho từng bước xử lý
     function addStepSection(container, title, description, imageUrl) {
       const stepContainer = document.createElement("div");
       stepContainer.className = "step-container";
@@ -394,22 +418,18 @@
       container.appendChild(stepContainer);
     }
 
-    // Hàm mở hộp thoại hướng dẫn
     function openDialog() {
       document.getElementById("guideDialog").showModal();
     }
 
-    // Hàm đóng hộp thoại hướng dẫn
     function closeDialog() {
       document.getElementById("guideDialog").close();
     }
 
-    // Hàm mở hộp thoại chọn ảnh từ máy tính
     function openImageDialog() {
       document.getElementById("imageInput").click();
     }
 
-    // Xử lý khi người dùng chọn ảnh từ máy tính
     document.getElementById("imageInput").addEventListener("change", function(event) {
       const file = event.target.files[0];
       if (file) {
@@ -418,11 +438,9 @@
           const img = new Image();
           img.onload = function() {
             // Tính toán tỷ lệ để vẽ ảnh vừa khít canvas
-            const scale = Math.min(canvas.width / img.width, canvas.height / img.height);
-            const x = (canvas.width / 2) - (img.width / 2) * scale;
-            const y = (canvas.height / 2) - (img.height / 2) * scale;
-            clearCanvas();
-            ctx.drawImage(img, x, y, img.width * scale, img.height * scale);
+            canvas.width = img.width;
+            canvas.height = img.height;
+            ctx.drawImage(img, 0, 0, img.width, img.height);
           }
           img.src = e.target.result;
         }
