@@ -112,29 +112,36 @@ def preprocess_image(image):
     Tiền xử lý ảnh vẽ (nền đen, số trắng) theo các bước:
       1) Chuyển ảnh sang grayscale.
       2) Làm mờ ảnh để giảm nhiễu.
-      3) Áp dụng enhance_black_background để tạo ảnh nhị phân.
+      3) Xử lý nền để đảm bảo nền đen, số trắng.
       4) Tìm contours ngoài để lấy vùng chứa số.
       5) Mở rộng bounding box để không cắt sát mép.
       6) Gom các bounding box thành các dòng.
-      7) Với mỗi bounding box, tăng độ dày nét (dilation) và thêm padding,
-         sau đó resize về 28x28 và chuẩn hóa [0,1].
+      7) Với mỗi bounding box:
+         - Nếu nét quá nhỏ so với kích thước trung bình, tăng độ dày nét (dilation) và thêm padding.
+         - Resize về 28x28 và chuẩn hóa [0,1].
       8) Trả về danh sách ảnh đã xử lý và dictionary chứa các bước xử lý.
     """
     steps = {}
+
+    # 1. Chuyển ảnh sang grayscale
     img_gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
     steps["gray"] = image_to_base64(img_gray)
-    
+
+    # 2. Làm mờ ảnh để giảm nhiễu
     img_blurred = apply_gaussian_blur(img_gray, kernel_size=(5, 5))
     steps["blurred"] = image_to_base64(img_blurred)
-    
+
+    # 3. Xử lý nền để đảm bảo nền đen, số trắng
     img_optimized = enhance_black_background(img_blurred)
     steps["optimized_background"] = image_to_base64(img_optimized)
-    
+
+    # 4. Tìm contours ngoài để lấy vùng chứa số
     contours, _ = cv2.findContours(img_optimized, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     img_with_contours = cv2.cvtColor(img_optimized.copy(), cv2.COLOR_GRAY2BGR)
     cv2.drawContours(img_with_contours, contours, -1, (0, 255, 0), 2)
     steps["contours"] = image_to_base64(img_with_contours)
-    
+
+    # 5. Mở rộng bounding box để không cắt sát mép
     digit_boxes = []
     for cnt in contours:
         x, y, w, h = cv2.boundingRect(cnt)
@@ -149,40 +156,57 @@ def preprocess_image(image):
             if y_pad + h_pad > img_optimized.shape[0]:
                 h_pad = img_optimized.shape[0] - y_pad
             digit_boxes.append((x_pad, y_pad, w_pad, h_pad))
-    
+
+    # 6. Gom các bounding box thành các dòng và sắp xếp
     img_with_boxes = cv2.cvtColor(img_optimized.copy(), cv2.COLOR_GRAY2BGR)
     for (x, y, w, h) in digit_boxes:
         cv2.rectangle(img_with_boxes, (x, y), (x + w, y + h), (0, 0, 255), 2)
     steps["boxes"] = image_to_base64(img_with_boxes)
-    
+
     digit_boxes = group_boxes(digit_boxes, row_threshold=20)
     img_with_sorted_boxes = cv2.cvtColor(img_optimized.copy(), cv2.COLOR_GRAY2BGR)
     for i, (x, y, w, h) in enumerate(digit_boxes):
         cv2.rectangle(img_with_sorted_boxes, (x, y), (x + w, y + h), (0, 0, 255), 2)
         cv2.putText(img_with_sorted_boxes, str(i), (x, y - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 0, 0), 2)
     steps["sorted_boxes"] = image_to_base64(img_with_sorted_boxes)
-    
-    raw_digits = []
+
+    # 7. Xử lý từng bounding box: tăng nét nếu nét quá nhỏ so với trung bình
     processed_digits = []
     steps["digits_raw"] = []
     steps["thickened_digits"] = []
     steps["digits_resized"] = []
-    
+    steps["is_thickened_digits"] = []
+
+    # Lấy danh sách ROI từ các bounding box
+    roi_list = []
     for (x, y, w, h) in digit_boxes:
         roi = img_optimized[y:y+h, x:x+w]
+        roi_list.append(roi)
+
+    # Ngưỡng cố định: nếu chiều cao lớn hơn 350 pixel thì tăng nét
+    HEIGHT_THRESHOLD = 350
+
+    for idx, roi in enumerate(roi_list):
         steps["digits_raw"].append(image_to_base64(roi))
-        
-        roi_thickened = increase_stroke_thickness(roi, dilation_kernel_size=(5, 5), dilation_iterations=3, padding=10)
-        steps["thickened_digits"].append(image_to_base64(roi_thickened))
-        
+        h = roi.shape[0]
+        # Tăng nét nếu chiều cao ROI > HEIGHT_THRESHOLD
+        if h > HEIGHT_THRESHOLD:
+            roi_thickened = increase_stroke_thickness(
+                roi, dilation_kernel_size=(5, 5), dilation_iterations=2, padding=6)
+            steps["thickened_digits"].append(image_to_base64(roi_thickened))
+            steps["is_thickened_digits"].append(True)
+        else:
+            roi_thickened = roi
+            steps["is_thickened_digits"].append(False)
+
         roi_resized = resize_and_pad(roi_thickened, size=28, padding=5)
         steps["digits_resized"].append(image_to_base64(roi_resized))
-        
+
         roi_norm = roi_resized.astype("float32") / 255.0
-        roi_norm = np.expand_dims(roi_norm, axis=-1)  # chuyển từ (28,28) -> (28,28,1)
-        roi_norm = np.expand_dims(roi_norm, axis=0)    # tạo batch: (1,28,28,1)
+        roi_norm = np.expand_dims(roi_norm, axis=-1)  # (28,28) -> (28,28,1)
+        roi_norm = np.expand_dims(roi_norm, axis=0)   # (28,28,1) -> (1,28,28,1)
         processed_digits.append(roi_norm)
-    
+
     return processed_digits, steps
 
 @app.route('/predict_multiple', methods=['POST'])

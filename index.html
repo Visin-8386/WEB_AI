@@ -157,6 +157,11 @@
       <input type="file" id="imageInput" accept="image/*" style="display:none;">
     </div>
     <div id="result" class="result">Vẽ số và nhấn "Dự đoán"</div>
+    <!-- Thêm mục cảnh báo -->
+    <div id="warning-section" style="margin-top: 20px; padding: 10px; border-radius: 8px; background: rgba(255,0,0,0.08); color: #ff4b5c; font-weight: bold; display: none; box-shadow: 0 0 10px #ff4b5c;">
+      <span id="warning-title" style="font-size:18px;">⚠️ Cảnh báo:</span>
+      <div id="warning-digits" style="margin-top:10px; font-weight:normal;"></div>
+    </div>
     <div id="background-results" style="margin-top: 20px;"></div>
     
     <h2>Các bước xử lý ảnh</h2>
@@ -246,6 +251,8 @@
       document.getElementById("result").innerText = "Vẽ số và nhấn 'Dự đoán'";
       document.getElementById("digits-overview").innerHTML = "";
       document.getElementById("steps-details").innerHTML = "";
+      // Ẩn cảnh báo khi xóa canvas
+      document.getElementById("warning-section").style.display = "none";
     }
 
     // Hàm chuyển tab
@@ -275,29 +282,82 @@
 
       if (result.error) {
         document.getElementById("result").innerHTML = `<span style="color:red;">Lỗi: ${result.error}</span>`;
+        // Ẩn cảnh báo nếu có lỗi
+        document.getElementById("warning-section").style.display = "none";
       } else {
-        document.getElementById("result").innerText = `Dự đoán: ${result.number_string}`;
-        
-        // Hiển thị tổng quan (các chữ số đã nhận diện)
+        // Phân loại số dựa trên độ tin cậy
         const digitsOverview = document.getElementById("digits-overview");
         digitsOverview.innerHTML = "";
-        
-        result.steps?.digits_resized?.forEach((base64Str, index) => {
+        const warningDigits = [];
+        const normalDigits = [];
+        const normalIndexes = [];
+        const warningIndexes = [];
+        result.confidence.forEach((conf, idx) => {
+          if (conf < 0.55) {
+            warningDigits.push({
+              digit: result.digits[idx],
+              confidence: conf,
+              img: result.steps.digits_resized[idx]
+            });
+            warningIndexes.push(idx);
+          } else {
+            normalDigits.push({
+              digit: result.digits[idx],
+              confidence: conf,
+              img: result.steps.digits_resized[idx]
+            });
+            normalIndexes.push(idx);
+          }
+        });
+
+        // Hiển thị kết quả dự đoán chỉ với các số có độ tin cậy >= 55%
+        if (normalDigits.length > 0) {
+          document.getElementById("result").innerText =
+            `Dự đoán: ${normalDigits.map(d => d.digit).join("")}`;
+        } else {
+          document.getElementById("result").innerText = "Không có số nào đủ độ tin cậy!";
+        }
+
+        // Hiển thị tổng quan (chỉ các số đủ tin cậy)
+        normalDigits.forEach((item, index) => {
           const digitContainer = document.createElement("div");
           digitContainer.className = "digit-item";
-          
           const img = document.createElement("img");
-          img.src = "data:image/png;base64," + base64Str;
+          img.src = "data:image/png;base64," + item.img;
           img.className = "digit-image";
-          
           const label = document.createElement("div");
-          label.innerText = `Số ${result.digits[index]} (Độ tin cậy: ${(result.confidence[index] * 100).toFixed(2)}%)`;
-          
+          label.innerText = `Số ${item.digit} (Độ tin cậy: ${(item.confidence * 100).toFixed(2)}%)`;
           digitContainer.appendChild(img);
           digitContainer.appendChild(label);
           digitsOverview.appendChild(digitContainer);
         });
-        
+
+        // Hiển thị cảnh báo nếu có số độ tin cậy thấp
+        const warningSection = document.getElementById("warning-section");
+        const warningDigitsDiv = document.getElementById("warning-digits");
+        if (warningDigits.length > 0) {
+          warningSection.style.display = "block";
+          warningSection.style.background = "rgba(255,0,0,0.18)";
+          warningSection.style.boxShadow = "0 0 20px #ff4b5c";
+          warningDigitsDiv.innerHTML = "";
+          warningDigits.forEach((item, idx) => {
+            const digitContainer = document.createElement("div");
+            digitContainer.className = "digit-item";
+            digitContainer.style.display = "inline-block";
+            digitContainer.style.marginRight = "20px";
+            const img = document.createElement("img");
+            img.src = "data:image/png;base64," + item.img;
+            img.className = "digit-image";
+            const label = document.createElement("div");
+            label.innerText = `Số ${item.digit} (Độ tin cậy: ${(item.confidence * 100).toFixed(2)}%)`;
+            digitContainer.appendChild(img);
+            digitContainer.appendChild(label);
+            warningDigitsDiv.appendChild(digitContainer);
+          });
+        } else {
+          warningSection.style.display = "none";
+        }
+
         // Hiển thị chi tiết các bước xử lý
         const stepsDetails = document.getElementById("steps-details");
         stepsDetails.innerHTML = "";
@@ -339,12 +399,15 @@
         }
         
         // Bước 7: Tăng độ dày nét vẽ và làm bự chữ số
+        // Chỉ hiển thị các ảnh đã thực sự được tăng nét
         result.steps.thickened_digits.forEach((base64Str, index) => {
-          addStepSection(stepsDetails, `Bước 7.${index + 1}: Tăng độ dày nét vẽ`, 
-            "Tăng độ dày nét vẽ và làm bự chữ số nếu kích thước quá nhỏ.",
-            "data:image/png;base64," + base64Str);
+          if (result.steps.is_thickened_digits[index]) {
+            addStepSection(stepsDetails, `Bước 7.${index + 1}: Tăng độ dày nét vẽ`, 
+              "Tăng độ dày nét vẽ và làm bự chữ số nếu kích thước quá nhỏ.",
+              "data:image/png;base64," + base64Str);
+          }
         });
-        
+
         // Bước 8: Cắt và resize các chữ số
         const digitStepContainer = document.createElement("div");
         digitStepContainer.className = "step-container";
@@ -365,8 +428,16 @@
           digitPair.className = "digit-item";
           digitPair.style.marginRight = "20px";
           
+          // Nếu số đã tăng nét, ảnh gốc là thickened_digits[index], ngược lại là digits_raw[index]
+          let rawImgSrc;
+          if (result.steps.is_thickened_digits[index]) {
+            rawImgSrc = "data:image/png;base64," + result.steps.thickened_digits.shift();
+          } else {
+            rawImgSrc = "data:image/png;base64," + rawDigit;
+          }
+
           const rawImg = document.createElement("img");
-          rawImg.src = "data:image/png;base64," + rawDigit;
+          rawImg.src = rawImgSrc;
           rawImg.className = "digit-image";
           rawImg.style.marginBottom = "5px";
           
