@@ -1,17 +1,17 @@
 import numpy as np
 import cv2
-
-# Chuyển ảnh numpy array sang chuỗi base64 để hiển thị trên web
-# Hàm này sẽ được import từ app.py vì cần base64 và cv2
-
+import base64
+from sklearn.cluster import DBSCAN
+# Hàm chuyển ảnh numpy array sang chuỗi base64 để hiển thị trên web
 def image_to_base64(img: np.ndarray) -> str:
-    import base64
     ret, buffer = cv2.imencode('.png', img)
     return base64.b64encode(buffer).decode('utf-8')
 
+# Hàm áp dụng Gaussian Blur
 def apply_gaussian_blur(image, kernel_size=(5, 5), sigma=0):
     return cv2.GaussianBlur(image, kernel_size, sigma)
 
+# Hàm cải thiện nền đen
 def enhance_black_background(img_gray):
     hist = cv2.calcHist([img_gray], [0], None, [256], [0, 256])
     threshold, binary = cv2.threshold(img_gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
@@ -23,6 +23,7 @@ def enhance_black_background(img_gray):
     binary = cv2.morphologyEx(binary, cv2.MORPH_CLOSE, kernel, iterations=1)
     return binary
 
+# Hàm thay đổi kích thước và thêm padding
 def resize_and_pad(roi, size=28, padding=5):
     h, w = roi.shape
     if h > w:
@@ -38,37 +39,35 @@ def resize_and_pad(roi, size=28, padding=5):
     canvas[y_offset:y_offset+new_h, x_offset:x_offset+new_w] = resized
     return canvas
 
-def group_boxes(digit_boxes, row_threshold=20):
-    digit_boxes.sort(key=lambda b: b[1])
-    rows = []
-    for box in digit_boxes:
-        x, y, w, h = box
-        center_y = y + h / 2
-        if not rows:
-            rows.append([box])
-        else:
-            last_row = rows[-1]
-            avg_center_y = np.mean([r[1] + r[3] / 2 for r in last_row])
-            if abs(center_y - avg_center_y) <= row_threshold:
-                last_row.append(box)
-            else:
-                rows.append([box])
-    for r in rows:
-        r.sort(key=lambda b: b[0])
-    sorted_boxes = []
-    for r in rows:
-        sorted_boxes.extend(r)
+
+def group_boxes(digit_boxes, eps=30, min_samples=1):
+    if not digit_boxes:
+        return []
+    centers_y = np.array([y + h / 2 for x, y, w, h in digit_boxes]).reshape(-1, 1)
+    clustering = DBSCAN(eps=eps, min_samples=min_samples).fit(centers_y)
+    labels = clustering.labels_
+    rows = {}
+    for i, label in enumerate(labels):
+        if label not in rows:
+            rows[label] = []
+        rows[label].append(digit_boxes[i])
+    if -1 in rows:
+        del rows[-1]
+    sorted_rows = sorted(rows.items(), key=lambda item: np.mean([b[1] + b[3] / 2 for b in item[1]]))
+    for _, row in sorted_rows:
+        row.sort(key=lambda b: b[0])
+    sorted_boxes = [box for _, row in sorted_rows for box in row]
     return sorted_boxes
 
+# Hàm làm dày nét chữ
 def increase_stroke_thickness(roi, dilation_kernel_size=(5, 5), dilation_iterations=3, padding=10):
     dilation_kernel = np.ones(dilation_kernel_size, np.uint8)
     roi_dilated = cv2.dilate(roi, dilation_kernel, iterations=dilation_iterations)
     roi_padded = cv2.copyMakeBorder(roi_dilated, padding, padding, padding, padding, cv2.BORDER_CONSTANT, value=0)
     return roi_padded
 
+# Hàm tiền xử lý ảnh hoàn chỉnh
 def preprocess_image(image):
-    # Để tránh import vòng, các hàm phụ trợ như image_to_base64 nên import lại trong hàm này nếu cần
-    from .preprocessing import image_to_base64, apply_gaussian_blur, enhance_black_background, group_boxes, increase_stroke_thickness, resize_and_pad
     steps = {}
     img_gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
     steps["gray"] = image_to_base64(img_gray)
@@ -98,7 +97,9 @@ def preprocess_image(image):
     for (x, y, w, h) in digit_boxes:
         cv2.rectangle(img_with_boxes, (x, y), (x + w, y + h), (0, 0, 255), 2)
     steps["boxes"] = image_to_base64(img_with_boxes)
-    digit_boxes = group_boxes(digit_boxes, row_threshold=20)
+    
+    digit_boxes = group_boxes(digit_boxes, eps=30, min_samples=1)
+    
     img_with_sorted_boxes = cv2.cvtColor(img_optimized.copy(), cv2.COLOR_GRAY2BGR)
     for i, (x, y, w, h) in enumerate(digit_boxes):
         cv2.rectangle(img_with_sorted_boxes, (x, y), (x + w, y + h), (0, 0, 255), 2)
@@ -124,6 +125,7 @@ def preprocess_image(image):
             steps["is_thickened_digits"].append(True)
         else:
             roi_thickened = roi
+            steps["thickened_digits"].append(image_to_base64(roi_thickened))
             steps["is_thickened_digits"].append(False)
         roi_resized = resize_and_pad(roi_thickened, size=28, padding=5)
         steps["digits_resized"].append(image_to_base64(roi_resized))

@@ -7,7 +7,6 @@ import cv2
 import tensorflow as tf
 from flask import Flask, request, jsonify, send_from_directory
 from flask_cors import CORS
-# Import các hàm tiền xử lý từ src.data.preprocessing
 from src.data.preprocessing import (
     image_to_base64,
     apply_gaussian_blur,

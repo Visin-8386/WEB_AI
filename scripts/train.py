@@ -25,8 +25,6 @@ datagen.fit(x_train)
 # Xây dựng mô hình CNN tối ưu
 model = build_model(input_shape=(28, 28, 1), num_classes=10)
 
-# Biên dịch mô hình (đã có trong build_model)
-
 # Dừng sớm nếu không cải thiện sau 5 epoch
 early_stopping = keras.callbacks.EarlyStopping(monitor="val_accuracy", patience=5, restore_best_weights=True)
 
